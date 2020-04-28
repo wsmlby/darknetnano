@@ -487,16 +487,18 @@ void print_detections(image im, detection *dets, int num, float thresh, char **n
             printf(" [%d+%d, %d+%d], %d %d\n", left, right - left, top, bot - top, im.w, im.h);
         }
     }
-    if (out_results!= NULL && idx < *numResult) {
-        *numResult = idx;
-    }
+    
     qsort(results, idx, sizeof(yolo_result), yolo_result_cmp);
     for(int i = 0; i < idx; i ++) {
         printf("Sorted: %s: %d%%\n", results[i].name,(int)(results[i].confident * 100));
     }
-    if (out_results!= NULL) {
-        memcpy(out_results, results, idx * sizeof(yolo_result));
+    if (out_results!= NULL && idx < *numResult) {
+        *numResult = idx;
     }
+    if (out_results!= NULL) {
+        memcpy(out_results, results, (*numResult) * sizeof(yolo_result));
+    }
+    free(results);
 }
 
 typedef struct {
