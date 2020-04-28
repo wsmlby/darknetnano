@@ -430,10 +430,20 @@ void visualize(char *cfgfile, char *weightfile)
 #endif
 }
 
-void print_detections(image im, detection *dets, int num, float thresh, char **names, int classes)
+
+typedef struct {
+    char name[128];
+    float confident;
+    int top, left, right, bot;
+} yolo_result;
+int yolo_result_cmp(const yolo_result *a, const yolo_result* b) {
+    return a->confident < b->confident ? 1: -1;
+}
+void print_detections(image im, detection *dets, int num, float thresh, char **names, int classes, yolo_result* out_results, int* numResult)
 {
     int i,j;
-
+    yolo_result* results = malloc(num * sizeof(yolo_result));
+    int idx = 0;
     for(i = 0; i < num; ++i){
         char labelstr[4096] = {0};
         int class = -1;
@@ -446,10 +456,16 @@ void print_detections(image im, detection *dets, int num, float thresh, char **n
                     strcat(labelstr, ", ");
                     strcat(labelstr, names[j]);
                 }
+                if ( dets[i].prob[j] >  dets[i].prob[class]) {
+                    class = j;
+                }
                 printf("%s: %.0f%%", names[j], dets[i].prob[j]*100);
             }
         }
+        
         if(class >= 0){
+            results[idx].confident = dets[i].prob[class];
+            strncpy(results[idx].name, names[class], 128);
             box b = dets[i].bbox;
             // printf(" %f %f %f %f::", b.x, b.y, b.w, b.h);
 
@@ -462,9 +478,24 @@ void print_detections(image im, detection *dets, int num, float thresh, char **n
             if(right > im.w-1) right = im.w-1;
             if(top < 0) top = 0;
             if(bot > im.h-1) bot = im.h-1;
+            results[idx].left = left;
+            results[idx].right = right;
+            results[idx].top = top;
+            results[idx].bot = bot;
+            idx ++;
 
             printf(" [%d+%d, %d+%d], %d %d\n", left, right - left, top, bot - top, im.w, im.h);
         }
+    }
+    if (out_results!= NULL && idx < *numResult) {
+        *numResult = idx;
+    }
+    qsort(results, idx, sizeof(yolo_result), yolo_result_cmp);
+    for(int i = 0; i < idx; i ++) {
+        printf("Sorted: %s: %d%%\n", results[i].name,(int)(results[i].confident * 100));
+    }
+    if (out_results!= NULL) {
+        memcpy(out_results, results, idx * sizeof(yolo_result));
     }
 }
 
@@ -474,20 +505,24 @@ typedef struct {
     layer l;
 } model_yolo;
 
-model_yolo* create_model(char *cfgfile, char *weightfile) {
-    printf("Loaded0\n");
-    list *options = read_data_cfg("cfg/coco.data");
-    printf("Loaded1 %d\n", options->size);
-    char *name_list = option_find_str(options, "names", "data/names.list");
+
+model_yolo* create_model(char* datafile, char* namelist,char *cfgfile, char *weightfile) {
+    srand(2222222);
+    list *options = read_data_cfg(datafile);
+    char *name_list = option_find_str(options, "names", namelist);
     model_yolo* m = malloc(sizeof(model_yolo));
-    m->names = get_labels(name_list);
+    char namepath[256];
+    int idx = strrchr(namelist, '/') - namelist;
+    strncpy(namepath, namelist, idx);
+    sprintf(namepath + idx, "/../%s", name_list);
+    m->names = get_labels(namepath);
     m->net = load_network(cfgfile, weightfile, 0);
     m-> l = m->net->layers[m->net->n-1];
     set_batch_network(m->net, 1);
     return m;
 }
 
-void run_model(model_yolo* m, char *filename, float thresh) {
+void run_model(model_yolo* m, char *filename, float thresh, yolo_result* results, int* numResult) {
     clock_t time;
     char buff[256];
     char *input = buff;
@@ -504,13 +539,15 @@ void run_model(model_yolo* m, char *filename, float thresh) {
     int nboxes = 0;
     detection *dets = get_network_boxes(m->net, im.w, im.h, thresh, 0.5, 0, 1, &nboxes, 0);
     if (nms) do_nms_sort(dets, nboxes, m->l.classes, nms);
-    print_detections(im, dets, nboxes, thresh, m->names, m->l.classes);
+    print_detections(im, dets, nboxes, thresh, m->names, m->l.classes, results, numResult);
     free_detections(dets, nboxes);
     free_image(im);
     free_image(sized);
 }
 
-
+void hello(char *a) {
+    printf("Hello %s\n", a);
+}
 
 int main(int argc, char **argv)
 {
@@ -568,10 +605,9 @@ int main(int argc, char **argv)
     } else if (0 == strcmp(argv[1], "super")){
         run_super(argc, argv);
     } else if (0 == strcmp(argv[1], "server")){
-        srand(2222222);
-        model_yolo *m = create_model(argv[2], argv[3]);
-        run_model(m, argv[4], 0.25);
-        run_model(m, argv[5], 0.25);
+        model_yolo *m = create_model("cfg/coco.data", "data/names.list", argv[2], argv[3]);
+        run_model(m, argv[4], 0.25, NULL, NULL);
+        run_model(m, argv[5], 0.25, NULL, NULL);
         free(m);
     } else if (0 == strcmp(argv[1], "detector")){
         run_detector(argc, argv);
